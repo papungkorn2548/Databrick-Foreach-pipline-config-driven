@@ -132,12 +132,7 @@ class SilverLayer:
         cast_col = [col(k).cast(v) for k,v in self.schema_detail.items() ]
         brononull_df = good.join(key_null_check,["_sk"],"left_anti")
         return(
-            brononull_df.join(bad,"_sk","left_anti").select(*cast_col).withColumn("_load_dt",current_date())
-            .withColumn("_load_dttm",current_timestamp())
-            .withColumn("_file_name",col("_metadata.file_name"))
-            .withColumn("_file_path",col("_metadata.file_path"))
-            .withColumn("_file_size",col("_metadata.file_size"))
-            .withColumn("_file_mod",col("_metadata.file_modification_time"))
+            brononull_df.join(bad,"_sk","left_anti").select(*cast_col)
             )
         
     def add_scd2_hash(self,df: DataFrame) -> DataFrame:
