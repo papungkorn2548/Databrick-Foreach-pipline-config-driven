@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %run "../no sdp have auto load/framework"
+# MAGIC %run "../src/framework"
 
 # COMMAND ----------
 
