@@ -71,7 +71,8 @@ class SilverLayer:
         self.bronze_table = f"{self.table_name}_bronze"
         self.bad_table = f"{self.table_name}_bad"
         self.source_table = f"{self.source_name}_source_silver"
-        self.source_table = spark.table(self.source_table)
+        if self.source_name is not None:
+            self.source_table = spark.table(self.source_table)
         self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$"}
         if self.scd2_enabled is True : self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys]
     

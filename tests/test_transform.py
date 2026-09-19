@@ -21,20 +21,12 @@ class TestTierDiscount(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        import sys
-        from delta import configure_spark_with_delta_pip
-        builder = SparkSession.builder \
-            .appName("unit-testing-unittest") \
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        cls.spark = configure_spark_with_delta_pip(builder).getOrCreate()
-
-        # Inject spark into the framework module's global namespace
-        # (framework_test.py uses bare `spark` like Databricks notebooks do)
-        for mod_name, mod in sys.modules.items():
-            if mod_name.endswith("framework_test") and hasattr(mod, "SilverLayer"):
-                mod.spark = cls.spark
-                break
+        try:
+            cls.spark = SparkSession.builder \
+                .appName("unit-testing-unittest") \
+                .getOrCreate()
+        except:
+            cls.spark = spark
 
 #   @classmethod
 #    def tearDownClass(cls):
