@@ -1,0 +1,85 @@
+resources:
+  jobs:
+    _:
+      name: --->
+      tasks:
+        - task_key: GetValue
+          notebook_task:
+            notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Bronze/Task_foreach_bronze_data
+            source: WORKSPACE
+        - task_key: BrozneLayer
+          depends_on:
+            - task_key: GetValue
+          for_each_task:
+            inputs: "{{tasks.GetValue.values.configtable}}"
+            task:
+              task_key: BrozneLayer_iteration
+              notebook_task:
+                notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Bronze/Bronze_fw
+                base_parameters:
+                  pipeline_name: "{{input.pipeline_name}}"
+                  file_path: "{{input.file_path}}"
+                  header: "{{input.header}}"
+                  delimiter: "{{input.delimiter}}"
+                  table_name: "{{input.table_name}}"
+                  schema_detail: "{{input.schema_detail}}"
+                  keys: "{{input.keys}}"
+                  write_mode: "{{input.write_mode}}"
+                source: WORKSPACE
+        - task_key: SilverLayer
+          depends_on:
+            - task_key: BrozneLayer
+          for_each_task:
+            inputs: "{{tasks.GetValue.values.configtable}}"
+            task:
+              task_key: SilverLayer_iteration
+              notebook_task:
+                notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Silver/Silver_fw
+                base_parameters:
+                  pipeline_name: "{{input.pipeline_name}}"
+                  file_path: "{{input.file_path}}"
+                  header: "{{input.header}}"
+                  delimiter: "{{input.delimiter}}"
+                  table_name: "{{input.table_name}}"
+                  schema_detail: "{{input.schema_detail}}"
+                  keys: "{{input.keys}}"
+                  write_mode: "{{input.write_mode}}"
+                source: WORKSPACE
+        - task_key: SCD2
+          depends_on:
+            - task_key: SilverLayer
+          notebook_task:
+            notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Silver/SCD2_fw
+            base_parameters:
+              scd2_enabled: "True"
+            source: WORKSPACE
+        - task_key: cross_check
+          depends_on:
+            - task_key: SilverLayer
+          notebook_task:
+            notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Silver/silver_cross_check
+            source: WORKSPACE
+        - task_key: GoldLayer
+          depends_on:
+            - task_key: SCD2
+            - task_key: cross_check
+          notebook_task:
+            notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/Gold/GOLD
+            source: WORKSPACE
+        - task_key: get
+          depends_on:
+            - task_key: GetValue
+          for_each_task:
+            inputs: "{{tasks.GetValue.values.configtable}}"
+            concurrency: 2
+            task:
+              task_key: CheckValue
+              notebook_task:
+                notebook_path: /Workspace/Users/papungkorn1245@gmail.com/src/test
+                base_parameters:
+                  pipeline_name: "{{input.pipeline_name}}"
+                  file_path: "{{input.file_path}}"
+                source: WORKSPACE
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
