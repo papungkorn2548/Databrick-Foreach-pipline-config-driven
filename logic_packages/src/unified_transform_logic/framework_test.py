@@ -42,7 +42,7 @@ class BronzeLayer:
             )
         
     def write_bronze(self,df : DataFrame) -> None:
-        df.write.mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.save_path)
+        df.write.format("delta").mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.save_path)
         print(f"Bronze layer written : {self.save_path}")
 
 def invalid_data(df:DataFrame) -> DataFrame:
@@ -81,7 +81,8 @@ class SilverLayer:
         self.bronze_table = f"{self.table_name}_bronze"
         self.bad_table = f"{self.table_name}_bad"
         self.source_table = f"{self.source_name}_source_silver"
-        self.source_table = spark.table(self.source_table)
+        if self.source_name is not None:
+            self.source_table = spark.table(self.source_table)
         self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$", "boolean": r"^(?i:true|false)$"}
         if self.scd2_enabled is True : self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys]
     
@@ -183,14 +184,14 @@ class SilverLayer:
     def data_table(self):
         target_df = (spark.table(self.silver_table).filter(col("is_current") == "True"))
         target_df = (self.add_scd2_hash(target_df))
-        target_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(f"{self.silver_table}_hash")
+        target_df.write.format("delta").mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(f"{self.silver_table}_hash")
 
     def apply_scd2(self,scd2_df: DataFrame) -> DeltaTable:
         if self.scd2_enabled == True:
             target_df = spark.table(self.silver_table)
             if "hash_key" not in target_df.columns:
                target_df = self.add_scd2_hash(target_df)
-               target_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(self.silver_table)
+               target_df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(self.silver_table)
             staging_df = (self.build_scd2_staging(scd2_df))
             insert_values = (self.build_insert_values())
             target_dt = (DeltaTable.forName(spark,f"{self.silver_table}_hash"))
@@ -225,8 +226,8 @@ class SilverLayer:
     
     def writeas(self,df:DataFrame,bad_rec_df:DataFrame) -> None:
         if self.scd2_enabled == False or isinstance(self.source_name, str):
-            df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.silver_table)
-            bad_rec_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.bad_table)
+            df.write.format("delta").mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.silver_table)
+            bad_rec_df.write.format("delta").mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.bad_table)
             print(f"{self.silver_table},{self.bad_table} write success")
         else:
             raise Exception("SCD2 is not avaiable for this column")
