@@ -57,10 +57,12 @@ employee = SilverLayer(
 
 # COMMAND ----------
 
+employee.data_table()
+
 hash_df = employee.detect_scd2()
 
 employee.apply_scd2(hash_df)
 
-result_df = spark.table(employee.silver_table)
+result_df = spark.table(f"{employee.table_name}_silver_hash")
 
 result_df.display()

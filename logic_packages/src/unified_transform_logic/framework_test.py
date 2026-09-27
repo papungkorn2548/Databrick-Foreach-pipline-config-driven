@@ -3,6 +3,16 @@ from pyspark.sql.functions import *
 from pyspark.sql.window import *
 from delta.tables import DeltaTable
 
+try:
+    spark
+except NameError:
+    from pyspark.sql import SparkSession
+    from delta import configure_spark_with_delta_pip
+    builder = SparkSession.builder \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
 @dataclass
 class BronzeLayer:
     pipeline_name : str
@@ -45,9 +55,9 @@ def invalid_data(df:DataFrame) -> DataFrame:
         ids = [*data_col]
         ,values = control_
         ,variableColumnName='reason'
-        ,valueColumnName = 'status'
+        ,valueColumnName = 'invalid_flag'
     ).
-    filter(col('status')==True).groupBy(*data_col).agg(collect_list(col('reason')).alias('reason')
+    filter(col('invalid_flag')==True).groupBy(*data_col).agg(collect_list(col('reason')).alias('reason')
 ))
     
 @dataclass
@@ -71,16 +81,17 @@ class SilverLayer:
         self.bronze_table = f"{self.table_name}_bronze"
         self.bad_table = f"{self.table_name}_bad"
         self.source_table = f"{self.source_name}_source_silver"
-        if self.source_name is not None:
-            self.source_table = spark.table(self.source_table)
-        self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$"}
+        self.source_table = spark.table(self.source_table)
+        self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$", "boolean": r"^(?i:true|false)$"}
         if self.scd2_enabled is True : self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys]
     
     def add_sk(self) -> DataFrame:
-        return spark.table(self.bronze_table).select(monotonically_increasing_id().alias('_sk'),*self.data_detail)
+        return spark.table(self.bronze_table).select(monotonically_increasing_id().alias('_sk'),*self.data_detail,)
     
     def invalid_check(self,df:DataFrame) -> DataFrame:
         invalid_col = {f"_{k}_is_invalid" : coalesce(~col(k).rlike(self.invalid_rule[v]),lit(False)) for k,v in self.schema_detail.items() if v not in "string"}
+        if self.scd2_enabled is True : 
+            self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys and i not in {"is_current", "start_date", "end_date"}]
         
         return(df.withColumns(invalid_col).transform(invalid_data))
     
@@ -119,9 +130,9 @@ class SilverLayer:
     def all_good(self,good:DataFrame,key_null_check:DataFrame,bad:DataFrame)-> DataFrame:
         cast_col = [col(k).cast(v) for k,v in self.schema_detail.items() ]
         brononull_df = good.join(key_null_check,["_sk"],"left_anti")
-        return(
-            brononull_df.join(bad,"_sk","left_anti").select(*cast_col)
-        )
+        return (
+            brononull_df.join(bad, "_sk", "left_anti").select(*cast_col,
+        "_sk"))
     def add_scd2_hash(self,df: DataFrame) -> DataFrame:
         if self.scd2_enabled is True and isinstance(self.source_name, str):
             return df.withColumn("hash_key",xxhash64(*[col(column)for column in self.keys])
@@ -131,12 +142,9 @@ class SilverLayer:
 
         return df
     
-    def detect_scd2(self) -> DataFrame:
+    def detect_scd2(self,) -> DataFrame:
         if self.scd2_enabled is True and isinstance(self.source_name, str):
-            if self.silver_table.startswith("/"):
-                target_df = (spark.read.format("delta").load(self.silver_table).filter(col("is_current") == True))
-            else:
-                target_df = (spark.table(self.silver_table).filter(col("is_current") == True))
+            target_df = (spark.table(self.silver_table).filter(col("is_current") == "True"))
             source_df = (self.add_scd2_hash(self.source_table))
             target_df = (self.add_scd2_hash(target_df))
         else:
@@ -165,38 +173,60 @@ class SilverLayer:
     def build_insert_values(self) -> dict:
         values = {column:f"source.{column}"for column in self.data_detail}
 
-        values.update({ "start_date":"current_date()"
+        values.update({ "start_date":current_date()
                        ,"end_date":"cast('9999-12-31' as date)"
                        ,"is_current":"true"
                        , "hash_key":"source.hash_key"
                        , "hash_value":"source.hash_value",
         })
         return values
-    #  CAN USE WHEN U MAKE DELTA TABLE ONE TIME AND ANOTHER USE JUST PUT SOURCE NAME IN CONFIGTABLE
-    def apply_scd2(self,scd2_df: DataFrame) -> None:
+    def data_table(self):
+        target_df = (spark.table(self.silver_table).filter(col("is_current") == "True"))
+        target_df = (self.add_scd2_hash(target_df))
+        target_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(f"{self.silver_table}_hash")
+
+    def apply_scd2(self,scd2_df: DataFrame) -> DeltaTable:
         if self.scd2_enabled == True:
+            target_df = spark.table(self.silver_table)
+            if "hash_key" not in target_df.columns:
+               target_df = self.add_scd2_hash(target_df)
+               target_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(self.silver_table)
             staging_df = (self.build_scd2_staging(scd2_df))
-            if self.silver_table.startswith("/"):
-                target = DeltaTable.forPath(spark, self.silver_table)
-            else:
-                target = DeltaTable.forName(spark, self.silver_table)
             insert_values = (self.build_insert_values())
-            scd2_finished = (target.alias("target").merge(staging_df.alias("source"),
+            target_dt = (DeltaTable.forName(spark,f"{self.silver_table}_hash"))
+            scd2_finished = (target_dt.alias("target").merge(staging_df.alias("source"),
                 """
                 target.hash_key = source.merge_key
                 AND target.is_current = true
                 """
-            ).whenMatchedUpdate(set={"end_date":"current_date()","is_current":"false"})
+            ).whenMatchedUpdate(set={"end_date":current_date(),"is_current":"false"})
             .whenNotMatchedInsert(values=insert_values)
             .execute())
             print("SCD2 finished")
         else:
             raise Exception("SCD2 is not enabled. or forgot source_name")
+
+    #def apply_scd2(self,scd2_df: DataFrame) -> DeltaTable:
+    #    if self.scd2_enabled == True:
+    #        staging_df = (self.build_scd2_staging(scd2_df))
+    #        insert_values = (self.build_insert_values())
+    #        target_dt = (DeltaTable.forName(spark,f"{self.silver_table}_hash"))
+    #        scd2_finished = (target_dt.alias("target").merge(staging_df.alias("source"),
+    #            """
+    #            target.hash_key = source.merge_key
+    #            AND target.is_current = true
+    #            """
+    #        ).whenMatchedUpdate(set={"end_date":current_date(),"is_current":"false"})
+    #        .whenNotMatchedInsert(values=insert_values)
+    #        .execute())
+    #        print("SCD2 finished")
+    #    else:
+    #        raise Exception("SCD2 is not enabled. or forgot source_name")
     
     def writeas(self,df:DataFrame,bad_rec_df:DataFrame) -> None:
         if self.scd2_enabled == False or isinstance(self.source_name, str):
-            df.write.mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.silver_table)
-            bad_rec_df.write.mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.bad_table)
+            df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.silver_table)
+            bad_rec_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.bad_table)
             print(f"{self.silver_table},{self.bad_table} write success")
         else:
             raise Exception("SCD2 is not avaiable for this column")

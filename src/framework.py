@@ -85,14 +85,16 @@ class SilverLayer:
         self.bad_table = f"{self.table_name}_bad"
         self.source_table = f"{self.source_name}_source_silver"
         self.source_table = spark.table(self.source_table)
-        self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$"}
+        self.invalid_rule = {'int' : "^[0-9]+$" , "date" : "^\\d{4}-\\d{2}-\\d{2}$", "boolean": r"^(?i:true|false)$"}
         if self.scd2_enabled is True : self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys]
     
     def add_sk(self) -> DataFrame:
-        return spark.table(self.bronze_table).select(monotonically_increasing_id().alias('_sk'),*self.data_detail)
+        return spark.table(self.bronze_table).select(monotonically_increasing_id().alias('_sk'),*self.data_detail,)
     
     def invalid_check(self,df:DataFrame) -> DataFrame:
         invalid_col = {f"_{k}_is_invalid" : coalesce(~col(k).rlike(self.invalid_rule[v]),lit(False)) for k,v in self.schema_detail.items() if v not in "string"}
+        if self.scd2_enabled is True : 
+            self.scd2_columns = [i for i in self.schema_detail.keys() if i not in self.keys and i not in {"is_current", "start_date", "end_date"}]
         
         return(df.withColumns(invalid_col).transform(invalid_data))
     
@@ -131,10 +133,9 @@ class SilverLayer:
     def all_good(self,good:DataFrame,key_null_check:DataFrame,bad:DataFrame)-> DataFrame:
         cast_col = [col(k).cast(v) for k,v in self.schema_detail.items() ]
         brononull_df = good.join(key_null_check,["_sk"],"left_anti")
-        return(
-            brononull_df.join(bad,"_sk","left_anti").select(*cast_col)
-            )
-        
+        return (
+            brononull_df.join(bad, "_sk", "left_anti").select(*cast_col,
+        "_sk"))
     def add_scd2_hash(self,df: DataFrame) -> DataFrame:
         if self.scd2_enabled is True and isinstance(self.source_name, str):
             return df.withColumn("hash_key",xxhash64(*[col(column)for column in self.keys])
@@ -146,7 +147,7 @@ class SilverLayer:
     
     def detect_scd2(self,) -> DataFrame:
         if self.scd2_enabled is True and isinstance(self.source_name, str):
-            target_df = (spark.table(self.silver_table).filter(col("is_current") == True))
+            target_df = (spark.table(self.silver_table).filter(col("is_current") == "True"))
             source_df = (self.add_scd2_hash(self.source_table))
             target_df = (self.add_scd2_hash(target_df))
         else:
@@ -175,35 +176,60 @@ class SilverLayer:
     def build_insert_values(self) -> dict:
         values = {column:f"source.{column}"for column in self.data_detail}
 
-        values.update({ "start_date":"current_date()"
+        values.update({ "start_date":current_date()
                        ,"end_date":"cast('9999-12-31' as date)"
                        ,"is_current":"true"
                        , "hash_key":"source.hash_key"
                        , "hash_value":"source.hash_value",
         })
         return values
+    def data_table(self):
+        target_df = (spark.table(self.silver_table).filter(col("is_current") == "True"))
+        target_df = (self.add_scd2_hash(target_df))
+        target_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(f"{self.silver_table}_hash")
 
-    def apply_scd2(self,scd2_df: DataFrame) -> None:
+    def apply_scd2(self,scd2_df: DataFrame) -> DeltaTable:
         if self.scd2_enabled == True:
+            target_df = spark.table(self.silver_table)
+            if "hash_key" not in target_df.columns:
+               target_df = self.add_scd2_hash(target_df)
+               target_df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(self.silver_table)
             staging_df = (self.build_scd2_staging(scd2_df))
-            target = ( DeltaTable.forName( spark,self.silver_table))
             insert_values = (self.build_insert_values())
-            scd2_finished = (target.alias("target").merge(staging_df.alias("source"),
+            target_dt = (DeltaTable.forName(spark,f"{self.silver_table}_hash"))
+            scd2_finished = (target_dt.alias("target").merge(staging_df.alias("source"),
                 """
                 target.hash_key = source.merge_key
                 AND target.is_current = true
                 """
-            ).whenMatchedUpdate(set={"end_date":"current_date()","is_current":"false"})
+            ).whenMatchedUpdate(set={"end_date":current_date(),"is_current":"false"})
             .whenNotMatchedInsert(values=insert_values)
             .execute())
             print("SCD2 finished")
         else:
             raise Exception("SCD2 is not enabled. or forgot source_name")
+
+    #def apply_scd2(self,scd2_df: DataFrame) -> DeltaTable:
+    #    if self.scd2_enabled == True:
+    #        staging_df = (self.build_scd2_staging(scd2_df))
+    #        insert_values = (self.build_insert_values())
+    #        target_dt = (DeltaTable.forName(spark,f"{self.silver_table}_hash"))
+    #        scd2_finished = (target_dt.alias("target").merge(staging_df.alias("source"),
+    #            """
+    #            target.hash_key = source.merge_key
+    #            AND target.is_current = true
+    #            """
+    #        ).whenMatchedUpdate(set={"end_date":current_date(),"is_current":"false"})
+    #        .whenNotMatchedInsert(values=insert_values)
+    #        .execute())
+    #        print("SCD2 finished")
+    #    else:
+    #        raise Exception("SCD2 is not enabled. or forgot source_name")
     
     def writeas(self,df:DataFrame,bad_rec_df:DataFrame) -> None:
         if self.scd2_enabled == False or isinstance(self.source_name, str):
-            df.write.mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.silver_table)
-            bad_rec_df.write.mode(self.write_mode).option("mergeSchema", "true").saveAsTable(self.bad_table)
+            df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.silver_table)
+            bad_rec_df.write.mode(self.write_mode).option("overwriteSchema", "true").saveAsTable(self.bad_table)
             print(f"{self.silver_table},{self.bad_table} write success")
         else:
             raise Exception("SCD2 is not avaiable for this column")
@@ -216,117 +242,3 @@ class SilverLayer:
         return (
         child_df.join(parent_df, key, "left_anti").select(col(key)).agg(count("*").alias("missing")).withColumn("status", when(col("missing") > 0 , lit("Fail")).otherwise(lit("PASS")))).show()
     
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC spark.table('session_life_hamham.session_life.config_table')
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC a = spark.table("session_life_hamham.session_life.employee_scd2_silver")
-# MAGIC a.columns
-
-# COMMAND ----------
-
-# MAGIC
-# MAGIC %skip
-# MAGIC %skip
-# MAGIC employee = SilverLayer(
-# MAGIC     pipeline_name="employee",
-# MAGIC     file_path="session_life_hamham.session_life.employee_scd2_silver",
-# MAGIC     header="true",
-# MAGIC     delimiter=",",
-# MAGIC     table_name=    "session_life_hamham.session_life.employee_scd2",
-# MAGIC     source_name  = "session_life_hamham.session_life.employee",
-# MAGIC     schema_detail={
-# MAGIC         "employee_id": "int",
-# MAGIC         "store_id": "string",
-# MAGIC         "salary": "int",
-# MAGIC     },
-# MAGIC     keys=["employee_id"],
-# MAGIC     write_mode="overwrite",
-# MAGIC     scd2_enabled=True
-# MAGIC )
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC print(employee.silver_table)
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC g = spark.table("session_life_hamham.session_life.employee_source_silver")
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC g.display()
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC hash_df = employee.detect_scd2()
-# MAGIC
-# MAGIC employee.apply_scd2(hash_df)
-# MAGIC
-# MAGIC result_df = spark.table(employee.silver_table)
-# MAGIC
-# MAGIC result_df.display()
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC s =  SilverLayer(
-# MAGIC     pipeline_name= "order_items",
-# MAGIC     file_path= "/Volumes/session_life_hamham/session_life/manual_file_folder/order_items.csv",
-# MAGIC     header= "true",
-# MAGIC     delimiter= ",",
-# MAGIC     table_name= "session_life_hamham.session_life.order_items",
-# MAGIC     schema_detail= {"order_item_id": "int", "order_id": "string", "qty": "int", "price": "int","product_id" : "int"},
-# MAGIC     keys= ["order_item_id"],
-# MAGIC     write_mode= "overwrite"
-# MAGIC )
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC s_df = s.add_sk()
-# MAGIC invalid_df = s.invalid_check(s_df)
-# MAGIC k_df = s.key_null_check(s_df)
-# MAGIC dupe_df = s.key_dupe_check(s_df,k_df)
-# MAGIC bad_df = s.all_bad(invalid_df,k_df,dupe_df)
-# MAGIC all_goodsss = s.all_good(s_df,k_df,bad_df)
-# MAGIC fft_df = s.writeas(all_goodsss,bad_df)
-# MAGIC
-# MAGIC
-# MAGIC
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC ggg = s.cross_check("session_life_hamham.session_life.employee_scd2_silver","order_id")
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC ggg.display()
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC fft_df
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC display(invalid_df)
-
-# COMMAND ----------
-
-# MAGIC %skip
-# MAGIC spark.sql("""
-# MAGIC DROP TABLE IF EXISTS session_life_hamham.session_life.order_items_silver
-# MAGIC """)

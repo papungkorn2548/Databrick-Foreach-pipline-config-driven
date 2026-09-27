@@ -9,6 +9,12 @@ except ImportError:
         sys.path.insert(0, project_root)
     from logic_packages.src.unified_transform_logic.framework_test import BronzeLayer,SilverLayer
 
+try:
+    spark
+except NameError:
+    from pyspark.sql import SparkSession
+    spark = SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
+
 import unittest
 from pyspark.sql.types import StructType, StructField, StringType, FloatType, IntegerType, DateType, BooleanType
 from pyspark.sql.functions import col, xxhash64
@@ -21,12 +27,7 @@ class TestTierDiscount(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        try:
-            cls.spark = SparkSession.builder \
-                .appName("unit-testing-unittest") \
-                .getOrCreate()
-        except:
-            cls.spark = spark
+        cls.spark = spark
 
 #   @classmethod
 #    def tearDownClass(cls):
@@ -201,7 +202,7 @@ class TestTierDiscount(unittest.TestCase):
             StructField("is_current", BooleanType(), True),
             ])
 
-        table_name = "workspace.default.emp_scd2"        
+        table_name = "employee_scd2"        
         silver_table = f"{table_name}_silver"
 
         target = self.spark.createDataFrame(
@@ -216,9 +217,9 @@ class TestTierDiscount(unittest.TestCase):
                 col("shop_id"), col("sales_qty"), col("sales_amt"),
                 col("current_date"), col("end_date"), col("is_current"))})
 
-        (target.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(silver_table))                 
+        (target.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(silver_table))
 
-        source = self.spark.createDataFrame([(1, 1, 3, 2.0, "2025-01-01", "9999-12-31", True)],schema,)
+        source = self.spark.createDataFrame([(1, 1, 3, 2.0, "2025-01-01", "9999-12-31", True)],schema)
         source.createOrReplaceTempView("employee_source_silver")
 
         employee = SilverLayer(                          
@@ -242,13 +243,16 @@ class TestTierDiscount(unittest.TestCase):
             source_name="employee",
             )
 
+        employee.data_table()
+
         hash_df = employee.detect_scd2()
 
         employee.apply_scd2(hash_df)
 
-        result_df = self.spark.table(employee.silver_table)
+        result_df = spark.table(f"{employee.table_name}_silver_hash")
 
         assert result_df.filter(col("employee_id") == 1).count() == 2
+        assert result_df.filter(col("is_current") == True).count() == 1
         
     def test_cross_check(self):
 
