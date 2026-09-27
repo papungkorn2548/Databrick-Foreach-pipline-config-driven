@@ -10,3 +10,8 @@ print(pipeline_name,file_path)
 # COMMAND ----------
 
 print("For_test")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC alright
