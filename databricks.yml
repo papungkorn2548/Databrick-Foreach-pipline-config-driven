@@ -17,7 +17,7 @@ targets:
     mode: development
     default: true
     workspace:
-      host: <YOUR-HOST>
+      host: https://dbc-5ff5343c-d92d.cloud.databricks.com
       root_path: ${var.root_path}
     variables:
       catalog: dev
@@ -25,7 +25,7 @@ targets:
   prod:
     mode: production
     workspace:
-      host: <YOUR-HOST>
+      host: https://dbc-5ff5343c-d92d.cloud.databricks.com
       root_path: ${var.root_path}
     artifacts:
       default:
