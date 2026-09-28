@@ -138,8 +138,10 @@ class SilverLayer:
         "_sk"))
     def add_scd2_hash(self,df: DataFrame) -> DataFrame:
         if self.scd2_enabled is True and isinstance(self.source_name, str):
-            return df.withColumn("hash_key",xxhash64(*[col(column)for column in self.keys])
-            ).withColumn("hash_value",xxhash64(*[col(column)for column in self.scd2_columns]))
+            key_cols = [col(c).cast(self.schema_detail[c]) for c in self.keys]
+            scd2_cols = [col(c).cast(self.schema_detail[c]) for c in self.scd2_columns]
+            return df.withColumn("hash_key",xxhash64(*key_cols)
+            ).withColumn("hash_value",xxhash64(*scd2_cols))
         else:
             raise Exception("SCD2 is not enabled. or forgot source_name")
 

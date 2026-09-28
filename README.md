@@ -53,32 +53,89 @@
   * `delta-spark==3.2.0`
   * `build==1.5.0`
 
-## การติดตั้ง (Installation)
+## ขั้นตอนการใช้งานทั้งหมด (Step-by-Step Guide)
 
-### 1. Clone โปรเจกต์
+### ขั้นตอนที่ 1 — Clone โปรเจกต์
 
 ```bash
 git clone <repository-url>
 cd Databrick-Foreach-pipline-config-driven
 ```
 
-### 2. ติดตั้ง Databricks CLI (ถ้ายังไม่มี)
+### ขั้นตอนที่ 2 — ติดตั้ง Databricks CLI (ถ้ายังไม่มี)
 
 ```bash
 pip install databricks-cli
 databricks configure
 ```
 
-### 3. สร้าง Config Table และโครงสร้าง Unity Catalog
+> สำหรับ Databricks CLI เวอร์ชันใหม่ (v0.200+) ให้ใช้ `pip install databricks-sdk` และ `databricks auth login` แทน
 
-รัน notebook `config_table/ddl` บน Databricks เพื่อสร้าง:
+### ขั้นตอนที่ 3 — Deploy Bundle เพื่อนำ Notebook ขึ้น Workspace
+
+ก่อนรัน DDL notebook ได้ ต้อง deploy bundle ก่อนเพื่อให้ notebook และไฟล์ CSV ถูกคัดลอกขึ้น Workspace:
+
+```bash
+# Validate bundle config
+databricks bundle validate --target dev
+
+# Deploy bundle ขึ้น Workspace
+databricks bundle deploy --target dev
+```
+
+หลัง deploy สำเร็จ notebook และไฟล์ CSV ใน `data_set/` จะถูกคัดลอกไปยัง:
+
+```
+/Workspace/Users/<your-email>/.bundle/CF_DRIVEN_DATABIRCK/dev/
+├── notebooks/   (notebook ทั้งหมด)
+└── files/
+    └── data_set/   (ไฟล์ CSV ตัวอย่าง)
+```
+
+### ขั้นตอนที่ 4 — รัน DDL Notebook (สร้าง Catalog, Schema, Volume, Config Table)
+
+รัน notebook `config_table/ddl` เพื่อสร้าง:
 
 * Catalog: `session_life_hamham`
 * Schema: `session_life`
 * Volume: `manual_file_folder` (สำหรับเก็บไฟล์ CSV)
 * Table: `config_table` (ตาราง config หลัก)
+* คัดลอกไฟล์ CSV จาก `data_set/` ไปยัง Volume อัตโนมัติ
+* Insert ข้อมูล config ของทุกไปป์ไลน์ตัวอย่าง (orders, customers, products, ...) ลงใน `config_table`
 
-จากนั้น insert ข้อมูล config ของแต่ละไปป์ไลน์ลงใน `config_table` โดยแต่ละแถวประกอบด้วย:
+**วิธีที่ 1 — รันจาก Databricks UI (ง่ายสุด)**
+
+1. เปิด notebook `config_table/ddl` ใน Databricks (จาก path ที่ deploy ไว้ในขั้นตอนที่ 3)
+2. กด **Run All**
+3. รอจนกว่าทุก cell จะรันเสร็จ
+
+**วิธีที่ 2 — รันผ่าน CLI**
+
+```bash
+databricks jobs create --json '{
+  "name": "run-ddl",
+  "tasks": [{
+    "task_key": "ddl",
+    "notebook_task": {
+      "notebook_path": "<your-workspace-path>/.bundle/CF_DRIVEN_DATABIRCK/dev/notebooks/ddl",
+      "source": "WORKSPACE"
+    }
+  }]}'
+
+databricks jobs run-now --job-id <job-id>
+```
+
+> แทนที่ `<your-workspace-path>` ด้วย path ของคุณ เช่น `/Workspace/Users/your-email@company.com`
+
+### ขั้นตอนที่ 5 — ตรวจสอบ Config Table
+
+หลังจากรัน DDL notebook แล้ว ตรวจสอบว่า `config_table` มีข้อมูลครบถ้วน:
+
+```sql
+SELECT * FROM session_life_hamham.session_life.config_table;
+```
+
+แต่ละแถวใน `config_table` ประกอบด้วย:
 
 | คอลัมน์ | คำอธิบาย | ตัวอย่าง |
 | --- | --- | --- |
@@ -93,23 +150,19 @@ databricks configure
 | `source_name` | ตาราง Silver ต้นทาง (สำหรับ SCD2) | `session_life_hamham.session_life.employee` |
 | `scd2_enabled` | เปิด SCD Type 2 หรือไม่ | `true` |
 
-### 4. อัปโหลดไฟล์ CSV ตัวอย่าง
+### ขั้นตอนที่ 6 — ตรวจสอบไฟล์ CSV ใน Volume
 
-อัปโหลดไฟล์ในโฟลเดอร์ `data_set/` ไปยัง Volume `session_life_hamham.session_life.manual_file_folder`
+ตรวจสอบว่าไฟล์ CSV ถูกคัดลอกไปยัง Volume แล้ว:
 
-## วิธีการใช้งาน (Usage)
-
-### รัน Setup Notebook (DDL)
-
-ก่อนรัน pipeline ครั้งแรก ต้องรัน notebook `config_table/ddl` เพื่อสร้าง catalog, schema, volume, config table และ copy ไฟล์ CSV ไปยัง Volume:
-
-```bash
-databricks notebook run "<your-workspace-path>/Databrick-Foreach-pipline-config-driven/config_table/ddl"
+```python
+dbutils.fs.ls("/Volumes/session_life_hamham/session_life/manual_file_folder/")
 ```
-> คำสั่งนี้รันทุก cell ใน notebook จากเครื่อง local ผ่าน CLI ไม่ต้องเปิด Databricks UI
-> แทนที่ `<your-workspace-path>` ด้วย path ของคุณใน Databricks workspace เช่น `/Users/your-email@company.com`
 
-### Deploy ด้วย DABs
+ควรเห็นไฟล์ CSV ทั้งหมด เช่น `orders.csv`, `customers.csv`, `products.csv`, `payments.csv`, `returns.csv`, `shipments.csv`, `stores.csv`, `suppliers.csv`, `categories.csv`, `promotions.csv`, `order_items.csv`, `employee_scd2.csv`, `employee_source_silver.csv`
+
+### ขั้นตอนที่ 7 — Deploy Job Pipeline ด้วย DABs
+
+หลังจาก DDL และ config พร้อมแล้ว ให้ deploy Job ที่จะรัน pipeline:
 
 ```bash
 # Validate
@@ -117,24 +170,48 @@ databricks bundle validate --target dev
 
 # Deploy
 databricks bundle deploy --target dev
-
-# Run
- databricks bundle run --target dev
 ```
 
 สำหรับ production:
 
 ```bash
+databricks bundle validate --target prod
 databricks bundle deploy --target prod
+```
+
+> target `prod` จะ build `.whl` จาก `logic_packages/` อัตโนมัติ ก่อน deploy
+
+### ขั้นตอนที่ 8 — รัน Pipeline
+
+```bash
+# รัน pipeline สำหรับ dev
+databricks bundle run --target dev
+
+# รัน pipeline สำหรับ prod
 databricks bundle run --target prod
 ```
-> target `prod` จะ build `.whl` จาก `logic_packages/` อัตโนมัติ
+
+หรือรันจาก Databricks UI → ไปที่ **Jobs** → เลือก Job ที่ deploy ไว้ → กด **Run Now**
+
+### ขั้นตอนที่ 9 — ติดตามผลการรัน (Monitoring)
+
+1. ไปที่ **Jobs** ใน Databricks UI
+2. เลือก Job ที่รัน → ดู **Run details**
+3. ตรวจสอบสถานะของแต่ละ task:
+   * **GetValue** — อ่าน config_table → ส่งค่าไปยัง for_each
+   * **BronzeLayer** — รัน Bronze ทุกไปป์ไลน์ขนาน (for_each)
+   * **SilverLayer** — รัน Silver ทุกไปป์ไลน์ขนาน (for_each) (DQ + SCD2)
+   * **SCD2** — ประมวลผล SCD Type 2
+   * **cross_check** — ตรวจสอบข้อมูล Silver
+   * **GoldLayer** — รวมข้อมูล Gold
+   * **CheckValue** — ตรวจสอบค่า config (for_each)
+4. หาก task ใดมี error ให้คลิกเข้าไปดู log และ stack trace
 
 ### สถาปัตยกรรม Job Workflow
 
 ```
 GetValue (อ่าน config_table)
-   ├──> BrozneLayer (for_each: รัน Bronze ทุกไปป์ไลน์ขนาน)
+   ├──> BronzeLayer (for_each: รัน Bronze ทุกไปป์ไลน์ขนาน)
    │       └──> SilverLayer (for_each: รัน Silver ทุกไปป์ไลน์ขนาน)
    │              ├──> SCD2 (ประมวลผล SCD Type 2)
    │              └──> cross_check (ตรวจสอบข้อมูล)
