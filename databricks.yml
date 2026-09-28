@@ -7,10 +7,7 @@ include:
 variables:
   catalog:
   root_path:
-    default: ~/.bundle/${bundle.name}/${bundle.target}
-  notebook_base_path:
-    description: "Absolute workspace path to the project root (where src/ is located)"
-    default: ~/Databrick-Foreach-pipline-config-driven
+    default: /Workspace/Users/papungkorn1245@gmail.com/.bundle/${bundle.name}/${bundle.target}
   package_dependencies:
     description: "Python dependencies for job environments"
     default: []
