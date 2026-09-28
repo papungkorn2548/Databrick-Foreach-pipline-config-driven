@@ -42,22 +42,6 @@ def upsert_into(df:DataFrame,table_name:str,keys:list) -> DataFrame:
 
 # COMMAND ----------
 
-l = spark.table("session_life_hamham.session_life.employee_scd2_silver")
-
-l.columns
-
-# COMMAND ----------
-
-raw = (
-    spark.read.format('csv')
-    .option("header",True)
-    .option("delimiter",",")
-    .load("/Volumes/session_life_hamham/session_life/manual_file_folder/returns.csv")
-    )
-raw.columns
-
-# COMMAND ----------
-
 data = [{
     "pipeline_name": "order_items",
     "file_path": "/Volumes/session_life_hamham/session_life/manual_file_folder/order_items.csv",
@@ -75,7 +59,7 @@ data = [{
     "header": "true",
     "delimiter": ",",
     "table_name": "session_life_hamham.session_life.employee_scd2",
-    "schema_detail": {"employee_id": "int", "store_id": "string", "salary": "int"},
+    "schema_detail": {"employee_id": "int", "store_id": "string", "salary": "int", "start_date": "date", "end_date": "date", "is_current": "boolean"},
     "keys": ["employee_id"],
     "write_mode": "overwrite",
     "source_name": "session_life_hamham.session_life.employee",
@@ -209,21 +193,3 @@ schema = StructType([
 
 mock_df = spark.createDataFrame(data, schema)
 upsert_into(mock_df,"session_life_hamham.session_life.config_table",["pipeline_name"])
-
-# COMMAND ----------
-
-raw = (
-    spark.read.format('csv')
-    .option("header",True)
-    .option("delimiter",",")
-    .load("/Volumes/session_life_hamham/session_life/manual_file_folder/customers.csv")
-    )
-raw.columns
-
-# COMMAND ----------
-
-raw.display()
-
-# COMMAND ----------
-
-mock_df.display()
