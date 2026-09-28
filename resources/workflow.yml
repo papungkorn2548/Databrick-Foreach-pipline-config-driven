@@ -5,7 +5,7 @@ resources:
       tasks:
         - task_key: GetValue
           notebook_task:
-            notebook_path: src/Bronze/Task_foreach_bronze_data
+            notebook_path: ${var.notebook_base_path}/src/Bronze/Task_foreach_bronze_data
             source: WORKSPACE
         - task_key: BrozneLayer
           depends_on:
@@ -15,7 +15,7 @@ resources:
             task:
               task_key: BrozneLayer_iteration
               notebook_task:
-                notebook_path: src/Bronze/Bronze_fw
+                notebook_path: ${var.notebook_base_path}/src/Bronze/Bronze_fw
                 base_parameters:
                   pipeline_name: "{{input.pipeline_name}}"
                   file_path: "{{input.file_path}}"
@@ -34,7 +34,7 @@ resources:
             task:
               task_key: SilverLayer_iteration
               notebook_task:
-                notebook_path: src/Silver/Silver_fw
+                notebook_path: ${var.notebook_base_path}/src/Silver/Silver_fw
                 base_parameters:
                   pipeline_name: "{{input.pipeline_name}}"
                   file_path: "{{input.file_path}}"
@@ -49,7 +49,7 @@ resources:
           depends_on:
             - task_key: SilverLayer
           notebook_task:
-            notebook_path: src/Silver/SCD2_fw
+            notebook_path: ${var.notebook_base_path}/src/Silver/SCD2_fw
             base_parameters:
               scd2_enabled: "True"
             source: WORKSPACE
@@ -57,14 +57,14 @@ resources:
           depends_on:
             - task_key: SilverLayer
           notebook_task:
-            notebook_path: src/Silver/silver_cross_check
+            notebook_path: ${var.notebook_base_path}/src/Silver/silver_cross_check
             source: WORKSPACE
         - task_key: GoldLayer
           depends_on:
             - task_key: SCD2
             - task_key: cross_check
           notebook_task:
-            notebook_path: src/Gold/GOLD
+            notebook_path: ${var.notebook_base_path}/src/Gold/GOLD
             source: WORKSPACE
         - task_key: get
           depends_on:
@@ -75,7 +75,7 @@ resources:
             task:
               task_key: CheckValue
               notebook_task:
-                notebook_path: src/test
+                notebook_path: ${var.notebook_base_path}/src/test
                 base_parameters:
                   pipeline_name: "{{input.pipeline_name}}"
                   file_path: "{{input.file_path}}"
