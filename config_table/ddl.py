@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 from pyspark.sql.types import *
 from delta.tables import DeltaTable
 from pyspark.sql.functions import *
@@ -193,3 +197,52 @@ schema = StructType([
 
 mock_df = spark.createDataFrame(data, schema)
 upsert_into(mock_df,"session_life_hamham.session_life.config_table",["pipeline_name"])
+
+# COMMAND ----------
+
+def write_csv_to_volume(file_name:str) -> None:
+    current_user = spark.sql("SELECT current_user()").collect()[0][0]
+    source_path = f'/Workspace/Users/{current_user}/.bundle/CF_DRIVEN_DATABIRCK/dev/files/data_set/{file_name}.csv'
+    volume_location = f'/Volumes/session_life_hamham/session_life/manual_file_folder/{file_name}.csv'
+    try:
+        dbutils.fs.rm(volume_location)
+    except:
+        pass
+    try:
+        dbutils.fs.cp(source_path, volume_location)
+    except Exception:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        content = w.workspace.download(f'/Users/{current_user}/.bundle/CF_DRIVEN_DATABIRCK/dev/files/data_set/{file_name}.csv')
+        dbutils.fs.put(volume_location, content.read().decode('utf-8'), overwrite=True)
+    print(f'{file_name} written to {volume_location}')
+
+# COMMAND ----------
+
+write_csv_to_volume("order_items")
+write_csv_to_volume("employee_scd2")
+write_csv_to_volume("orders")
+write_csv_to_volume("payments")
+write_csv_to_volume("products")
+write_csv_to_volume("promotions")
+write_csv_to_volume("returns")
+write_csv_to_volume("shipments")
+write_csv_to_volume("stores")
+write_csv_to_volume("suppliers")
+write_csv_to_volume("categories")
+write_csv_to_volume("customers")
+write_csv_to_volume("employee_source_silver")
+
+# COMMAND ----------
+
+df = spark.read.format("csv").option("header", "true").option("delimiter", ",").load("/Volumes/session_life_hamham/session_life/manual_file_folder/employee_source_silver.csv")
+
+df.write.mode("overwrite").option("mergeSchema", "true").saveAsTable("session_life_hamham.session_life.employee_source_silver")
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+

@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %run "../src/framework"
+# MAGIC %run "../framework"
 
 # COMMAND ----------
 
@@ -38,12 +38,6 @@ Brozne = BronzeLayer(
 # COMMAND ----------
 
 Bronze_read_df = Brozne.read_bronze()
-
-if "status" in schema_detail:
-    Bronze_read_df = Bronze_read_df.withColumnRenamed(
-        "status",
-        "status_"
-    )
 Bronze_write_dt = Brozne.write_bronze(
     Bronze_read_df
     )
