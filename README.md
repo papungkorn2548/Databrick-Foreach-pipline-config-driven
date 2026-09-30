@@ -1,5 +1,7 @@
 # 1. Databricks Config-Driven Data Pipeline
 
+**This project demonstrates how to build and orchestrate a reusable Databricks pipeline that processes multiple retail datasets from raw files into validated, analytics-ready Delta tables, with pipeline behavior controlled by configuration instead of duplicated code.**
+
 An end-to-end batch data engineering project built with Databricks, PySpark, Delta Lake, and Lakeflow Jobs. It processes multiple retail datasets through reusable Bronze and Silver `for_each_task` iterations, performs data quality checks, and publishes Gold KPI tables.
 
 ## 2. Overview
@@ -7,6 +9,29 @@ An end-to-end batch data engineering project built with Databricks, PySpark, Del
 Pipeline metadata is stored in a Unity Catalog config table, allowing Bronze and Silver processing to be parameterized by source. The sample datasets include orders, customers, products, payments, returns, stores, and suppliers.
 
 **Project focus:** workflow orchestration, config-driven processing, data quality handling, SCD Type 2, and analytics-ready outputs.
+
+### Sample Datasets
+
+The CSV files in `data_set/` represent related retail entities. Row counts below exclude the header row.
+
+| Dataset | Rows | Purpose |
+| --- | ---: | --- |
+| `orders.csv` | 300,000 | Order transactions with customer, store, date, and promotion references. |
+| `order_items.csv` | 600,000 | Products, quantities, and prices for individual order lines; linked to orders and products. |
+| `customers.csv` | 50,000 | Customer location and signup date; customer IDs are referenced by orders. |
+| `products.csv` | 10,000 | Product price and category/supplier references. |
+| `categories.csv` | 30 | Product category names used to group product sales. |
+| `suppliers.csv` | 200 | Supplier countries, used to group category and refund metrics. |
+| `stores.csv` | 100 | Store locations, used in store-level sales and repeat-purchase metrics. |
+| `payments.csv` | 300,000 | Payment amounts associated with orders. |
+| `promotions.csv` | 50 | Promotion discounts referenced by orders. |
+| `returns.csv` | 30,000 | Refund amounts associated with order items. |
+| `shipments.csv` | 300,000 | Shipment status for orders; available as a sample source dataset. |
+| `employee_scd2.csv` | 1,000 | Employee records with effective dates and current-row flags; used as the SCD Type 2 target example. |
+| `employee_source_silver.csv` | 50 | Incoming employee records used to identify inserts and changes for the SCD Type 2 example. |
+| `employee_source_50.csv` | 50 | Small employee source sample for SCD2 experimentation; not loaded by the current DDL setup. |
+
+The Gold notebook currently uses orders, payments, and stores to create `gold_store_repeat_kpi`; it uses order items, products, categories, suppliers, and returns to create `gold_category_return_kpi`. Customers, promotions, and shipments are configured sample inputs but are not currently used in those Gold calculations. The employee files demonstrate SCD Type 2 processing, not retail KPI generation.
 
 ## 3. Architecture
 
@@ -166,9 +191,6 @@ The `prod` target builds a wheel from `logic_packages/`.
 Run **`config_table/ddl.py`** in the Databricks workspace. It creates the catalog, schema, Volume, and config table, inserts sample pipeline configurations, and copies sample CSV files to the Volume.
 
 The DDL currently uses catalog `session_life_hamham`, schema `session_life`, and Volume `manual_file_folder`.
-
-
-
 
 ### 4. Run the job
 
